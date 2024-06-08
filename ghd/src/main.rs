@@ -9,6 +9,18 @@ const DEPLOYMENTS_BASE_URL: &str = "https://api.github.com/";
 #[derive(Deserialize, Debug)]
 struct Deployment {
     sha: String,
+    statuses_url: String,
+}
+
+#[derive(Deserialize, Debug)]
+struct DeploymentStatus {
+    state: String,
+}
+
+impl DeploymentStatus {
+    pub fn is_successful(&self) -> bool {
+        return self.state == "success";
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -32,8 +44,17 @@ impl GithubApi {
             .json::<Vec<Deployment>>()
             .expect("Error de-serializing the response");
 
+        let latest_successful_deployment;
+        match deployments
+            .iter()
+            .find(|&d| self.is_deployment_successful(d))
+        {
+            Some(d) => latest_successful_deployment = d,
+            None => panic!("No successful deployment"),
+        }
+
         let url_commit = self
-            .build_commit_object_url(repo, deployments[0].sha.as_str())
+            .build_commit_object_url(repo, latest_successful_deployment.sha.as_str())
             .expect("Invalid URL");
         let commit = self
             .make_get_request(&url_commit)
@@ -43,6 +64,25 @@ impl GithubApi {
             .json::<GitCommit>()
             .expect("Error de-serializing the response");
         return commit.message;
+    }
+
+    fn is_deployment_successful(&self, deployment: &Deployment) -> bool {
+        let url =
+            Url::parse(deployment.statuses_url.as_str()).expect("Invalid deployment statuses URL");
+        let statuses = self
+            .make_get_request(&url)
+            .expect("Request git Github deployment-statuses API failed")
+            .error_for_status()
+            .expect("Error fetching deployment statuses")
+            .json::<Vec<DeploymentStatus>>()
+            .expect("Error de-serializing deployment-statuses response");
+
+        for ds in statuses.iter() {
+            if ds.is_successful() {
+                return true;
+            }
+        }
+        return false;
     }
 
     fn make_get_request(&self, url: &Url) -> Result<Response, Error> {
