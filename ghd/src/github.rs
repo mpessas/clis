@@ -22,12 +22,30 @@ pub struct Deployment {
     statuses_url: String,
 }
 
-impl Deployment {
+impl<'a> Deployment {
     fn new(sha: String, statuses_url: String) -> Self {
         return Deployment {
             sha: sha,
             statuses_url: statuses_url,
         };
+    }
+
+    fn is_successful(&self, client: &'a ApiClient) -> bool {
+        let url = Url::parse(self.statuses_url.as_str()).expect("Invalid deployment statuses URL");
+        let statuses = client
+            .make_get_request(&url)
+            .expect("Request git Github deployment-statuses API failed")
+            .error_for_status()
+            .expect("Error fetching deployment statuses")
+            .json::<Vec<DeploymentStatus>>()
+            .expect("Error de-serializing deployment-statuses response");
+
+        for ds in statuses.iter() {
+            if ds.is_successful() {
+                return true;
+            }
+        }
+        return false;
     }
 }
 
@@ -54,7 +72,7 @@ impl<'a> Repository<'a> {
             .deployments()
             .expect("Error fetching deployments for repo")
             .iter()
-            .find(|&d| self.is_deployment_successful(d))
+            .find(|&d| d.is_successful(&self.client))
         {
             Some(d) => Some(Deployment::new(d.sha.clone(), d.statuses_url.clone())),
             None => None,
@@ -91,26 +109,6 @@ impl<'a> Repository<'a> {
             .error_for_status()
             .expect("Error getting deployments")
             .json::<Vec<Deployment>>();
-    }
-
-    fn is_deployment_successful(&self, deployment: &Deployment) -> bool {
-        let url =
-            Url::parse(deployment.statuses_url.as_str()).expect("Invalid deployment statuses URL");
-        let statuses = self
-            .client
-            .make_get_request(&url)
-            .expect("Request git Github deployment-statuses API failed")
-            .error_for_status()
-            .expect("Error fetching deployment statuses")
-            .json::<Vec<DeploymentStatus>>()
-            .expect("Error de-serializing deployment-statuses response");
-
-        for ds in statuses.iter() {
-            if ds.is_successful() {
-                return true;
-            }
-        }
-        return false;
     }
 }
 
